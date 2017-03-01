@@ -20,7 +20,7 @@ class VehicleDetectionPipeline:
     self.logger = logger
     self.windows = None
     self.window_sizes = [(32,32), (64,64), (96,96), (128,128), (256,256)]
-    self.relative_y_start_stops = [(0.5, 0.7), (0.5, 0.8), (0.5, 0.8), (0.5, 0.9), (0.6, 1.0)]
+    self.relative_y_start_stops = [(0.3, 0.7), (0.4, 0.8), (0.4, 0.8), (0.4, 0.9), (0.5, 1.0)]
 
   def draw_boxes(self, img, bboxes, color=(0, 0, 255), thick=6):
     # Make a copy of the image
