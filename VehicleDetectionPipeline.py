@@ -1,7 +1,11 @@
-import matplotlib.pyplot as plt
 import camera_calibration as cc
-import frame_processing as fp
 import numpy as np
+import os
+import pickle
+from VehicleClassifier import VehicleClassifier
+from scipy.ndimage.measurements import label
+from LoggerCV import LoggerCV
+from LoggerCV import CVRecord
 
 import cv2
 
@@ -13,97 +17,108 @@ class VehicleDetectionPipeline:
 
   def __init__(self, calibration_images,
                calibration_nx, calibration_ny,
+               car_images, noncar_images,
+               classifier,
+               threshold,
+               scale1,
+               scale2,
+               scale3,
+               step1,
+               step2,
+               step3,
                logger):
     self.camera_matrix, self.distortion_coeff = cc.calibrate(calibration_images,
                                                              calibration_nx,
                                                              calibration_ny)
     self.logger = logger
-    self.windows = None
-    self.window_sizes = [(32,32), (64,64), (96,96), (128,128), (256,256)]
-    self.relative_y_start_stops = [(0.3, 0.7), (0.4, 0.8), (0.4, 0.8), (0.4, 0.9), (0.5, 1.0)]
-
-  def draw_boxes(self, img, bboxes, color=(0, 0, 255), thick=6):
-    # Make a copy of the image
-    imcopy = np.copy(img)
-    # Iterate through the bounding boxes
-    for bbox in bboxes:
-      # Draw a rectangle given bbox coordinates
-      cv2.rectangle(imcopy, bbox[0], bbox[1], color, thick)
-    # Return the image copy with boxes drawn
-    return imcopy
+    self.car_classifier = VehicleClassifier(car_images, noncar_images, classifier, logger)
+    self.previous_heatmaps = []
+    self.weights = [10, 9, 8, 6, 4]
+    self.scale1 = scale1
+    self.scale2 = scale2
+    self.scale3 = scale3
+    self.step1 = step1
+    self.step2 = step2
+    self.step3 = step3
+    self.threshold = threshold
+    self.frame = 0
 
 
   def process_frame(self, image):
+    '''
+    This method receives a video frame (image) as a parameter and returns an image with cars marked with boxes
+    :param image: image to detect cars
+    :return: new image with cars marked
+    '''
     undistorted_image = cv2.undistort(image, self.camera_matrix, self.distortion_coeff, None, self.camera_matrix)
+    windows = self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale1, self.step1, self.frame)
+    if self.scale2 != 0 and self.scale2 != self.scale1:
+      windows += self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale2, self.step2, self.frame)
 
-    windows = self.slide_windows(image.shape,[None,None], self.y_start_stops(image.shape[0]),
-                                 self.window_sizes)
+    if self.scale3 != 0 and self.scale3 != self.scale1 and self.scale3 != self.scale2:
+      windows += self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale3, self.step3, self.frame)
 
-    box_img = self.draw_boxes(undistorted_image, windows)
+    new_heatmap = self.heatmap(undistorted_image.shape[0:2], windows)
+    #self.previous_heatmaps.append(new_heatmap)
+    new_heatmap[new_heatmap <= self.threshold] = 0
+    self.previous_heatmaps.append(new_heatmap)
+    hlength = min(len(self.previous_heatmaps), len(self.weights))
+    heatmaps = np.dstack(self.previous_heatmaps[-1:-hlength-1:-1])
+    weights = self.weights[0:hlength]
+    heatmap = np.average(heatmaps, weights=weights, axis=2)
 
-    return box_img
+    if self.logger.enabled(self.frame):
+      self.logger.log(CVRecord("heatmap",
+                               self.frame, [heatmap], 'opencv'))
+
+    heatmap[heatmap <= self.threshold] = 0
+
+    if self.logger.enabled(self.frame):
+      self.logger.log(CVRecord("heatmap_threshold",
+                               self.frame, [heatmap], 'opencv'))
+
+    labels = label(heatmap)
+    result = self.draw_labeled_bboxes(image, labels)
+
+    self.frame +=1
+    return result
 
 
-  def detect_cars(self, image):
-    print("Hello!")
+  def heatmap(self, shape, windows):
+    '''
+    Create a heatmap with a specific shape, using the bounding boxes defined in windows to define hot regions
+    :param shape: shape of the heatmap
+    :param windows: bounding boxes used for computing the heatmap
+    :return: heatmap array
+    '''
+    heatmap = np.zeros(shape, dtype=np.float32)
+    for window in windows:
+      xmin = window[0][0]
+      ymin = window[0][1]
+      xmax = window[1][0]
+      ymax = window[1][1]
+      heatmap[ymin:ymax, xmin:xmax] += 1
+    return heatmap
 
 
-  def y_start_stops(self, height):
-    absolute_y_start_stops = []
-    for (ymin, ymax) in self.relative_y_start_stops:
-      absolute_y_start_stops.append([ int(ymin * height), int(ymax * height)])
-    return absolute_y_start_stops
-
-
-  def slide_windows(self, shape,
-                    x_start_stop=[None, None],
-                    y_start_stops=([None, None]),
-                    xy_windows=[(64, 64)],
-                    xy_overlap=(0.5, 0.5)):
-    if self.windows is not None:
-      return self.windows
-    # If x and/or y start/stop positions not defined, set to image size
-    if x_start_stop[0] == None:
-      x_start_stop[0] = 0
-    if x_start_stop[1] == None:
-      x_start_stop[1] = shape[1]
-
-    window_list = []
-    for i in range(len(xy_windows)):
-      xy_window = xy_windows[i]
-      y_start_stop = y_start_stops[i]
-      if y_start_stop[0] == None:
-        y_start_stop[0] = 0
-      if y_start_stop[1] == None:
-        y_start_stop[1] = shape[0]
-
-      # Compute the span of the region to be searched
-      xspan = x_start_stop[1] - x_start_stop[0]
-      yspan = y_start_stop[1] - y_start_stop[0]
-      # Compute the number of pixels per step in x/y
-      nx_pix_per_step = np.int(xy_window[0] * (1 - xy_overlap[0]))
-      ny_pix_per_step = np.int(xy_window[1] * (1 - xy_overlap[1]))
-      # Compute the number of windows in x/y
-      nx_buffer = np.int(xy_window[0] * (xy_overlap[0]))
-      ny_buffer = np.int(xy_window[1] * (xy_overlap[1]))
-      nx_windows = np.int((xspan - nx_buffer) / nx_pix_per_step)
-      ny_windows = np.int((yspan - ny_buffer) / ny_pix_per_step)
-      # Initialize a list to append window positions to
-
-      # Loop through finding x and y window positions
-      # Note: you could vectorize this step, but in practice
-      # you'll be considering windows one by one with your
-      # classifier, so looping makes sense
-      for ys in range(ny_windows):
-        for xs in range(nx_windows):
-          # Calculate window position
-          startx = xs * nx_pix_per_step + x_start_stop[0]
-          endx = startx + xy_window[0]
-          starty = ys * ny_pix_per_step + y_start_stop[0]
-          endy = starty + xy_window[1]
-          # Append window position to list
-          window_list.append(((startx, starty), (endx, endy)))
-      # Return the list of windows
-    return window_list
-
+  def draw_labeled_bboxes(self, img, labels):
+    '''
+    Draws labels bounding boxes
+    :param img: image to draw the bounding boxes associated with the labels
+    :param labels: labels structure
+    :return: new image with bounding boxes marked for the labels
+    '''
+    # Iterate through all detected cars
+    for car_number in range(1, labels[1] + 1):
+      # Find pixels with each car_number label value
+      nonzero = (labels[0] == car_number).nonzero()
+      # Identify x and y values of those pixels
+      nonzeroy = np.array(nonzero[0])
+      nonzerox = np.array(nonzero[1])
+      # Define a bounding box based on min/max x and y
+      bbox = ((np.min(nonzerox), np.min(nonzeroy)), (np.max(nonzerox), np.max(nonzeroy)))
+      # Draw the box on the image
+      cv2.rectangle(img, bbox[0], bbox[1], (0, 0, 255, 0.4), 6)
+    # Return the image
+    return img
 
