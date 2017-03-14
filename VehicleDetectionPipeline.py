@@ -1,4 +1,3 @@
-import camera_calibration as cc
 import numpy as np
 import os
 import pickle
@@ -15,8 +14,7 @@ class VehicleDetectionPipeline:
   marking them on the road image.
   '''
 
-  def __init__(self, calibration_images,
-               calibration_nx, calibration_ny,
+  def __init__(self,
                car_images, noncar_images,
                classifier,
                threshold,
@@ -27,9 +25,6 @@ class VehicleDetectionPipeline:
                step2,
                step3,
                logger):
-    self.camera_matrix, self.distortion_coeff = cc.calibrate(calibration_images,
-                                                             calibration_nx,
-                                                             calibration_ny)
     self.logger = logger
     self.car_classifier = VehicleClassifier(car_images, noncar_images, classifier, logger)
     self.previous_heatmaps = []
@@ -50,22 +45,23 @@ class VehicleDetectionPipeline:
     :param image: image to detect cars
     :return: new image with cars marked
     '''
-    undistorted_image = cv2.undistort(image, self.camera_matrix, self.distortion_coeff, None, self.camera_matrix)
-    windows = self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale1, self.step1, self.frame)
+    windows = self.car_classifier.find_cars(image, 330, 650, self.scale1, self.step1, self.frame)
     if self.scale2 != 0 and self.scale2 != self.scale1:
-      windows += self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale2, self.step2, self.frame)
+      windows += self.car_classifier.find_cars(image, 330, 650, self.scale2, self.step2, self.frame)
 
     if self.scale3 != 0 and self.scale3 != self.scale1 and self.scale3 != self.scale2:
-      windows += self.car_classifier.find_cars(undistorted_image, 330, 650, self.scale3, self.step3, self.frame)
+      windows += self.car_classifier.find_cars(image, 330, 650, self.scale3, self.step3, self.frame)
 
-    new_heatmap = self.heatmap(undistorted_image.shape[0:2], windows)
-    #self.previous_heatmaps.append(new_heatmap)
+    new_heatmap = self.heatmap(image.shape[0:2], windows)
     new_heatmap[new_heatmap <= self.threshold] = 0
     self.previous_heatmaps.append(new_heatmap)
     hlength = min(len(self.previous_heatmaps), len(self.weights))
     heatmaps = np.dstack(self.previous_heatmaps[-1:-hlength-1:-1])
     weights = self.weights[0:hlength]
     heatmap = np.average(heatmaps, weights=weights, axis=2)
+
+
+    self.debug_frame(new_heatmap, heatmap, image, windows)
 
     if self.logger.enabled(self.frame):
       self.logger.log(CVRecord("heatmap",
@@ -78,7 +74,8 @@ class VehicleDetectionPipeline:
                                self.frame, [heatmap], 'opencv'))
 
     labels = label(heatmap)
-    result = self.draw_labeled_bboxes(image, labels)
+    boxes = self.prune_labels(labels)
+    result = self.draw_bboxes(image, boxes)
 
     self.frame +=1
     return result
@@ -101,14 +98,8 @@ class VehicleDetectionPipeline:
     return heatmap
 
 
-  def draw_labeled_bboxes(self, img, labels):
-    '''
-    Draws labels bounding boxes
-    :param img: image to draw the bounding boxes associated with the labels
-    :param labels: labels structure
-    :return: new image with bounding boxes marked for the labels
-    '''
-    # Iterate through all detected cars
+  def prune_labels(self, labels):
+    boxes = []
     for car_number in range(1, labels[1] + 1):
       # Find pixels with each car_number label value
       nonzero = (labels[0] == car_number).nonzero()
@@ -117,6 +108,17 @@ class VehicleDetectionPipeline:
       nonzerox = np.array(nonzero[1])
       # Define a bounding box based on min/max x and y
       bbox = ((np.min(nonzerox), np.min(nonzeroy)), (np.max(nonzerox), np.max(nonzeroy)))
+      area = (bbox[1][0] - bbox[0][0]) * (bbox[1][1] - bbox[0][1])
+      ymax = bbox[1][1]
+
+      threshold_area = 40 * ymax - 15000
+      if area > threshold_area:
+        boxes.append(bbox)
+    return boxes
+
+
+  def draw_bboxes(self, img, boxes):
+    for bbox in boxes:
       # Draw the box on the image
       cv2.rectangle(img, bbox[0], bbox[1], (0, 0, 255, 0.4), 6)
     # Return the image

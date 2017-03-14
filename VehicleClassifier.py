@@ -63,6 +63,12 @@ class VehicleClassifier:
 
 
   def train(self, car_files, noncar_files):
+    '''
+    Train a Linear SVC for classification of Cars
+    :param car_files: list of car image files
+    :param noncar_files: list of non-car image files
+    :return: tuple with trained classifier and scaler
+    '''
     car_features = []
     noncar_features = []
     for car_file in car_files:
@@ -86,12 +92,16 @@ class VehicleClassifier:
     svc = LinearSVC()
     # Train the SVC
     svc.fit(x_train, y_train)
-
-    print("Classifier Test Accuracy: {}".format(svc.score(x_test, y_test)))
-
     return svc, x_scaler
 
-  def get_files(self, dir, extension ):
+
+  def get_files(self, dir, extension):
+    '''
+    Walk over directory, get all files with a given extension
+    :param dir: base directory to search for files with the given extension
+    :param extension: file extensions to search
+    :return: list with all filenames that have the given extension under the directory
+    '''
     filelist = []
     for root, dirs, files in os.walk(dir):
       for file in files:
@@ -100,7 +110,14 @@ class VehicleClassifier:
           filelist.append(root + '/' + file )
     return filelist
 
+
   def extract_features(self, image):
+    '''
+    Extract features from a given image during training, including HOG, Spatial Features
+    and Histogram of Colors.
+    :param image: image to extract features.
+    :return: extracted features from the image.
+    '''
     color_image = fp.convert_color(image, 'RGB', self.color_space).astype(np.float64)
     features = []
     if self.features_spatial:
@@ -124,6 +141,17 @@ class VehicleClassifier:
 
 
   def find_cars(self, image, ystart, ystop, scale, cells_per_step, frame_number):
+    '''
+    Find cars in an image using the Linear SVC classifier. Returns boxes with candidate windows matching cars according
+    to the classifier.
+    :param image: image to find cars.
+    :param ystart: min y coordinate to search for cars.
+    :param ystop: max y coordinate to search for cars.
+    :param scale: scaling of search window in image.
+    :param cells_per_step: number of cells the window moves on each step.
+    :param frame_number: frame number, used for debugging.
+    :return: list of bounding boxes containing matches according to the classifier.
+    '''
     if self.logger.enabled(frame_number):
       self.logger.log(CVRecord("find_cars_original", frame_number, [image.astype(np.float32)/255], 'opencv'))
 
@@ -148,10 +176,11 @@ class VehicleClassifier:
     nxsteps = (nxblocks - nblocks_per_window) // cells_per_step
     nysteps = (nyblocks - nblocks_per_window) // cells_per_step
 
-    # Compute individual channel HOG features for the entire image
-    hog1 = self.get_hog_features(ch1, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
-    hog2 = self.get_hog_features(ch2, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
-    hog3 = self.get_hog_features(ch3, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
+    if self.features_histogram_of_gradients:
+      # Compute individual channel HOG features for the entire image
+      hog1 = self.get_hog_features(ch1, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
+      hog2 = self.get_hog_features(ch2, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
+      hog3 = self.get_hog_features(ch3, self.orient, self.pix_per_cell, self.cell_per_block, feature_vec=False)
 
     if self.logger.enabled(frame_number):
       debug_boxes = []
@@ -161,11 +190,16 @@ class VehicleClassifier:
       for yb in range(nysteps):
         ypos = yb * cells_per_step
         xpos = xb * cells_per_step
+
+        all_features = []
+
         # Extract HOG for this patch
-        hog_feat1 = hog1[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-        hog_feat2 = hog2[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-        hog_feat3 = hog3[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
-        hog_features = np.hstack((hog_feat1, hog_feat2, hog_feat3))
+        if self.features_histogram_of_gradients:
+          hog_feat1 = hog1[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
+          hog_feat2 = hog2[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
+          hog_feat3 = hog3[ypos:ypos + nblocks_per_window, xpos:xpos + nblocks_per_window].ravel()
+          hog_features = np.hstack((hog_feat1, hog_feat2, hog_feat3))
+          all_features.append(hog_features)
 
         xleft = xpos * self.pix_per_cell
         ytop = ypos * self.pix_per_cell
@@ -173,16 +207,17 @@ class VehicleClassifier:
         # Extract the image patch
         subimg = cv2.resize(ctrans_tosearch[ytop:ytop + window, xleft:xleft + window], (64, 64))
 
-        #if self.logger.enabled(frame_number):
-        #  self.logger.log( CVRecord("find_cars_subimg_" + str(xleft) + "_" + str(ytop),
-        #                            frame_number, [fp.convert_color(subimg*255, self.color_space, 'RGB')], 'opencv'))
-
         # Get color features
-        spatial_features = fp.spatial_binning(subimg, size=self.spatial_size)
-        hist_features = fp.color_histogram(subimg, nbins=self.histogram_of_colors_bins)
+        if self.features_spatial:
+          spatial_features = fp.spatial_binning(subimg, size=self.spatial_size)
+          all_features.append(spatial_features)
+
+        if self.features_histogram_of_colors:
+          hist_features = fp.color_histogram(subimg, nbins=self.histogram_of_colors_bins)
+          all_features.append(hist_features)
 
         # Scale features and make a prediction
-        features = self.scaler.transform(np.hstack((spatial_features, hist_features, hog_features)).reshape(1, -1))
+        features = self.scaler.transform(np.hstack(all_features).reshape(1, -1))
         prediction = self.car_classifier.predict(features)
 
         if self.logger.enabled(frame_number):
@@ -193,8 +228,6 @@ class VehicleClassifier:
                               (xbox_left + win_draw, ytop_draw + win_draw + ystart)))
 
         if prediction == 1:
-          #if ( self.logger.enabled(frame_number)):
-          #  print("found car {}_{}".format(xleft, ytop))
           xbox_left = np.int(xleft * scale)
           ytop_draw = np.int(ytop * scale)
           win_draw = np.int(window * scale)
@@ -243,6 +276,64 @@ class VehicleClassifier:
       return features
 
 
+
+def debug_image(image_file, car_classifier, output_file ):
+  car_img = mpimg.imread(image_file)
+  car_img_yuv = fp.convert_color(car_img, 'RGB', 'YUV').astype(np.float64) / 255
+
+  features_y, hog_img_y = car_classifier.get_hog_features(car_img_yuv[:, :, 0],
+                                                          car_classifier.orient,
+                                                          car_classifier.pix_per_cell,
+                                                          car_classifier.cell_per_block,
+                                                          True, True)
+
+  features_u, hog_img_u = car_classifier.get_hog_features(car_img_yuv[:, :, 1],
+                                                          car_classifier.orient,
+                                                          car_classifier.pix_per_cell,
+                                                          car_classifier.cell_per_block,
+                                                          True, True)
+
+  features_v, hog_img_v = car_classifier.get_hog_features(car_img_yuv[:, :, 2],
+                                                          car_classifier.orient,
+                                                          car_classifier.pix_per_cell,
+                                                          car_classifier.cell_per_block,
+                                                          True, True)
+
+  figure = plt.figure(figsize=(8, 14))
+
+  plt.subplot('421')
+  plt.imshow(car_img)
+  plt.title("Original")
+
+  plt.subplot('422')
+  plt.imshow(car_img_yuv[:, :, 0], cmap='gray')
+  plt.title("Channel Y")
+
+  plt.subplot('423')
+  plt.imshow(car_img_yuv[:, :, 1], cmap='gray')
+  plt.title("Channel U")
+
+  plt.subplot('424')
+  plt.imshow(car_img_yuv[:, :, 2], cmap='gray')
+  plt.title("Channel V")
+
+  plt.subplot('425')
+  plt.imshow(hog_img_y, cmap='gray')
+  plt.title("HOG Channel Y")
+
+  plt.subplot('426')
+  plt.imshow(hog_img_u, cmap='gray')
+  plt.title("HOG Channel U")
+
+  plt.subplot('427')
+  plt.imshow(hog_img_v, cmap='gray')
+  plt.title("HOG Channel V")
+
+  plt.close()
+
+  figure.savefig(output_file)
+
+
 if __name__ == "__main__":
   images = glob.glob('test_images/*.jpg')
   logger = LoggerCV(False,0)
@@ -250,8 +341,18 @@ if __name__ == "__main__":
   count = 0
   for file in images:
     img = mpimg.imread(file)
-    boxes = car_classifier.find_cars(img, 400, 720, 2.0, 0)
+    boxes = car_classifier.find_cars(img, 400, 720, 2.0, 2, 0)
     box_img = car_classifier.draw_boxes(img, boxes)
     mpimg.imsave("img_" + str(count) + ".jpg", box_img*255)
     count += 1
+
+  car_files = car_classifier.get_files('./vehicles', '.png')
+  index = np.random.randint(0, len(car_files))
+  debug_image(car_files[index], car_classifier, 'car_figure.png')
+
+
+  noncar_files = car_classifier.get_files('./non-vehicles', '.png')
+  index = np.random.randint(0, len(noncar_files))
+  debug_image(noncar_files[index], car_classifier, 'noncar_figure.png')
+
 
