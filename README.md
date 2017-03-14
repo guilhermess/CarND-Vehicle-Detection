@@ -79,6 +79,6 @@ This project required a lot of experimentation with parameters, testing in the v
  
  The result of the project can be seen in the link below:
  
- [![IMAGE ALT Project Video](http://img.youtube.com/vi/VOgbPBuVFKY/0.jpg)](http://www.youtube.com/watch?v=VOgbPBuVFKY)
+ [![IMAGE ALT Project Video](http://img.youtube.com/vi/g8QZ-LUhOs4/0.jpg)](http://www.youtube.com/watch?v=g8QZ-LUhOs4)
  
 
