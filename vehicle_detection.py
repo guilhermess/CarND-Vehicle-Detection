@@ -21,13 +21,14 @@ def vehicle_detection(input_video_file,
                       car_images,
                       noncar_images,
                       classifier,
-                      threshold,
-                      scale1, scale2, scale3,
-                      step1, step2, step3,
+                      spatial, hoc, hog,
+                      threshold_low,
+                      threshold_high,
+                      debug_video,
                       logger):
-  vehicle_pipeline = VehicleDetectionPipeline(car_images, noncar_images, classifier, threshold,
-                                              scale1, scale2, scale3, step1, step2, step3,
-                                              logger)
+  vehicle_pipeline = VehicleDetectionPipeline(car_images, noncar_images, classifier, spatial, hoc, hog,
+                                              threshold_low, threshold_high,
+                                              debug_video, logger)
   video_processing(input_video_file, start, end, output_video_file, vehicle_pipeline)
 
 
@@ -40,21 +41,16 @@ if __name__ == '__main__':
   parser.add_argument('-car_images', help='Car Images for Classifier', action='store', default='./vehicles/')
   parser.add_argument('-noncar_images', help='Non-Car Images for Classifier', action='store', default='./non-vehicles/')
   parser.add_argument('-classifier', help='Classifier pickle database, reuse instead of training again.', action='store', default='./classifier.p')
-  parser.add_argument('-threshold', help='Threshold for heatmap to set box to 0.', action='store', default=6)
+  parser.add_argument('-threshold_low', help='Min Threshold for heatmap to draw bounding box.', action='store', default=2)
+  parser.add_argument('-threshold_high', help='Threshold for heatmap to consider as a car box.', action='store', default=4)
+  parser.add_argument('-spatial', help='Enable/Disable spatial binned features', action='store', default="False")
+  parser.add_argument('-hoc', help='Enable/Disable histogram of colors features', action='store', default="False")
+  parser.add_argument('-hog', help='Enable/Disable histogram of gradients features', action='store', default="True")
+
   parser.add_argument('-log_enabled', help='Path to file to store the log', action='store', default=True)
   parser.add_argument('-log_dir', help='Path to file to store the log', action='store', default='./log')
   parser.add_argument('-log_rate', help='Every % frames store image in log. Valid only if log is enabled', action='store', default=25)
-
-  parser.add_argument('-spatial', help='Enable/Disable spatial binned features', action='store', default="True")
-  parser.add_argument('-hoc', help='Enable/Disable histogram of colors features', action='store', default="True")
-  parser.add_argument('-hog', help='Enable/Disable histogram of gradients features', action='store', default="True")
-
-  parser.add_argument('-scale1', help='', action='store', default=1.0)
-  parser.add_argument('-scale2', help='', action='store', default=0.0)
-  parser.add_argument('-scale3', help='', action='store', default=0.0)
-  parser.add_argument('-step1', help='', action='store', default=2)
-  parser.add_argument('-step2', help='', action='store', default=2)
-  parser.add_argument('-step3', help='', action='store', default=2)
+  parser.add_argument('-debug_video', help='Write a debug video with heatmap and candidate windows.', action='store', default="False")
   args = parser.parse_args()
 
   logger = LoggerCV(args.log_enabled, args.log_rate)
@@ -75,19 +71,20 @@ if __name__ == '__main__':
   if args.hog != "True":
     hog = False
 
+  debug_video = True
+  if args.debug_video != "True":
+    debug_video = False
 
   vehicle_detection(args.input_video, float(args.start), end_time,
                     args.output_video,
                     args.car_images, args.noncar_images,
                     args.classifier,
-                    args.spatial
-                    float(args.threshold),
-                    float(args.scale1),
-                    float(args.scale2),
-                    float(args.scale3),
-                    int(args.step1),
-                    int(args.step2),
-                    int(args.step3),
+                    spatial,
+                    hoc,
+                    hog,
+                    float(args.threshold_low),
+                    float(args.threshold_high),
+                    debug_video,
                     logger)
 
   if ( args.log_enabled == True ):

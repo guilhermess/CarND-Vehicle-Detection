@@ -3,6 +3,13 @@ import numpy as np
 import cv2
 
 def convert_color(img, src, tgt):
+  '''
+  Converts from color space src to target
+  :param img: image to convert
+  :param src: source color space string.
+  :param tgt: target color space string.
+  :return: image converted to color space
+  '''
   if src == tgt:
     return np.copy(img)
   id = src + '2' + tgt
@@ -27,6 +34,12 @@ def convert_color(img, src, tgt):
 
 
 def spatial_binning(img, size=(32, 32)):
+  '''
+  Get spatial binning features from image
+  :param img: image to extract features from
+  :param size: target image size
+  :return: spatial binning features
+  '''
   color1 = cv2.resize(img[:, :, 0], size).ravel()
   color2 = cv2.resize(img[:, :, 1], size).ravel()
   color3 = cv2.resize(img[:, :, 2], size).ravel()
@@ -34,6 +47,13 @@ def spatial_binning(img, size=(32, 32)):
 
 
 def color_histogram(img, nbins=32, bins_range=(0, 256)):
+  '''
+  Get histogram of colors features
+  :param img: image to extract features from
+  :param nbins: number of bins in histogram
+  :param bins_range: histogram range
+  :return: color histogram features
+  '''
   # Compute the histogram of the color channels separately
   channel1_hist = np.histogram(img[:, :, 0], bins=nbins, range=bins_range)
   channel2_hist = np.histogram(img[:, :, 1], bins=nbins, range=bins_range)

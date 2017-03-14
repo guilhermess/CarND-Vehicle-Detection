@@ -337,13 +337,15 @@ def debug_image(image_file, car_classifier, output_file ):
 if __name__ == "__main__":
   images = glob.glob('test_images/*.jpg')
   logger = LoggerCV(False,0)
-  car_classifier = VehicleClassifier('./vehicles', './non-vehicles/', 'classifier.p', logger)
+  car_classifier = VehicleClassifier('./vehicles', './non-vehicles/', 'classifier.p', logger,
+                                     features_spatial=False, features_histogram_of_colors=False,
+                                     features_histogram_of_gradients=True)
   count = 0
   for file in images:
     img = mpimg.imread(file)
-    boxes = car_classifier.find_cars(img, 400, 720, 2.0, 2, 0)
+    boxes = car_classifier.find_cars(np.copy(img), 400, 720, 1.7, 4, 0)
     box_img = car_classifier.draw_boxes(img, boxes)
-    mpimg.imsave("img_" + str(count) + ".jpg", box_img*255)
+    mpimg.imsave("img_" + str(count) + ".jpg", box_img)
     count += 1
 
   car_files = car_classifier.get_files('./vehicles', '.png')
